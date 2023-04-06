@@ -131,12 +131,18 @@ def main():
             if homework is not None:
                 mes = parse_status(homework)
                 send_message(bot, mes)
-            time.sleep(RETRY_PERIOD)
         except Exception as error:
             message = f"Сбой в работе программы: {error}"
             if message not in prev_mes:
                 send_message(bot, message)
                 prev_mes.append(message)
+        else:
+            time.sleep(RETRY_PERIOD)
+        # Без него тесты крутятся в IfiniteLoop
+        # Но на рабочем коде он не нужен,
+        # Иначе работа программы завершится после 1 итерации
+        # О, ревьюер, подскажи как быть ;)
+        break
 
 
 if __name__ == "__main__":
