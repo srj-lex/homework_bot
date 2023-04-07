@@ -2,11 +2,14 @@ import os
 import requests
 import logging
 import time
+from http import HTTPStatus
+from typing import List
 
 import telegram
+from telegram.error import TelegramError
 from dotenv import load_dotenv
 
-from exceptions import TokenError
+import exceptions
 
 
 load_dotenv()
@@ -40,67 +43,54 @@ logger.addHandler(handler)
 def check_tokens() -> None:
     """Проверяет доступность переменных окружения."""
     env_var = (PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
-    for i in env_var:
-        if i is None:
-            logger.critical(
-                "Отсутствует обязательная "
-                f"переменная окружения: {i} "
-                "Программа принудительно остановлена."
-            )
-            raise TokenError("Отсутствует переменная окружения")
+    return all(env_var)
 
 
 def get_api_answer(timestamp: int) -> dict:
     """Делает запрос к эндпоинту API-сервиса."""
     payload = {"from_date": timestamp}
     try:
+        logger.debug(f"Запрос к {ENDPOINT}. Параметры: {HEADERS}, {payload}")
         response = requests.get(ENDPOINT, headers=HEADERS, params=payload)
-    except Exception:
-        logger.error("Упс, интерент кончился")
-    if response.status_code != 200:
-        logger.error(
-            "API Яндекса недоступен."
+    except requests.RequestException:
+        raise exceptions.APIConnectError(
+            "Ошибка при попытке соединения с эндпоинтом"
+        )
+    if response.status_code != HTTPStatus.OK:
+        raise exceptions.APIStatusError(
             f"Код ответа сервера: {response.status_code}"
         )
-        raise requests.RequestException
-
     return response.json()
 
 
 def check_response(response: dict) -> dict:
     """Проверяет ответ API на соответствие документации."""
-    if type(response) is not dict:
-        raise TypeError("Неверный тип передаваемого аргумента response")
+    if not isinstance(response, dict):
+        raise TypeError("Неверный тип передаваемого аргумента 'response'")
 
     if "homeworks" not in response:
-        logger.error("Ключ 'homeworks' отсутствует в ответе от API")
         raise KeyError("Отсутсвует ключ 'homeworks'")
 
-    if type(response["homeworks"]) is not list:
+    if not isinstance(response["homeworks"], list):
         raise TypeError("Неверный тип значения по  ключу 'homeworks'")
 
-    if response.get("homeworks") == []:
-        logger.debug("Статус домашней работы не изменился")
-    else:
-        return response.get("homeworks")[0]
+    return response.get("homeworks")
 
 
 def parse_status(homework: dict) -> str:
     """Извлекает статус домашней работы работы."""
     if homework.get("status", None) is None:
-        logger.error("Статус отсутствует")
         raise KeyError("Отсутсвует ключ 'status'")
 
     if homework["status"] not in ("reviewing", "approved", "rejected"):
-        logger.error("Неожиданный статус домашней работы")
         raise ValueError("Неожиданный статус домашней работы")
 
     if homework.get("homework_name", None) is None:
-        logger.error("Нет ключа 'homework_name'")
         raise KeyError("Отсутсвует ключ 'homework_name'")
 
     homework_name = homework.get("homework_name")
     verdict = HOMEWORK_VERDICTS.get(homework.get("status"))
+    print(homework_name, verdict, sep="\n")
     return (
         f'Изменился статус проверки работы "{homework_name}".\n' f"{verdict}"
     )
@@ -113,36 +103,48 @@ def send_message(bot: telegram.Bot, message: str) -> None:
             chat_id=TELEGRAM_CHAT_ID,
             text=message,
         )
+    except TelegramError:
+        logger.error("Произошла ошибка при отправке сообщения")
+        raise exceptions.TelegramBotError(
+            "Произошла ошибка при отправке сообщения"
+        )
+    finally:
         logger.debug("Бот отправил сообщение:" f"{message}")
-    except Exception:
-        logger.exception("Произошла ошибка при отправке сообщения")
 
 
 def main():
     """Основная логика работы бота."""
-    prev_mes = []
+    if not check_tokens():
+        logger.critical(
+            "Отсутствует обязательная переменная окружения."
+            "Программа принудительно остановлена."
+        )
+        raise exceptions.TokenError("Отсутствует переменная окружения")
+
+    prev_mes = None
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     timestamp = int(time.time())
-    check_tokens()
+    current_time = None
     while True:
         try:
-            response = get_api_answer(timestamp)
+            time_resp = timestamp if current_time is None else current_time
+            response = get_api_answer(time_resp)
+            current_time = response["current_date"]
             homework = check_response(response)
-            if homework is not None:
-                mes = parse_status(homework)
+            if homework == []:
+                logger.debug("Статус домашней работы не изменился")
+            else:
+                mes = parse_status(homework[0])
                 send_message(bot, mes)
+        except exceptions.TelegramBotError as error:
+            logger.error(error)
         except Exception as error:
             message = f"Сбой в работе программы: {error}"
-            if message not in prev_mes:
+            if message != prev_mes:
                 send_message(bot, message)
-                prev_mes.append(message)
-        else:
+                prev_mes = message
+        finally:
             time.sleep(RETRY_PERIOD)
-        # Без него тесты крутятся в IfiniteLoop
-        # Но на рабочем коде он не нужен,
-        # Иначе работа программы завершится после 1 итерации
-        # О, ревьюер, подскажи как быть ;)
-        break
 
 
 if __name__ == "__main__":
