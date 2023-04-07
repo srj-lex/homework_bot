@@ -3,7 +3,6 @@ import requests
 import logging
 import time
 from http import HTTPStatus
-from typing import List
 
 import telegram
 from telegram.error import TelegramError
