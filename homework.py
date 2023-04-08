@@ -20,7 +20,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 RETRY_PERIOD = 600
 ENDPOINT = "https://practicum.yandex.ru/api/user_api/homework_statuses/"
 HEADERS = {"Authorization": f"OAuth {PRACTICUM_TOKEN}"}
-DEBUG_VAR = 2600000
 
 
 HOMEWORK_VERDICTS = {
@@ -89,7 +88,6 @@ def parse_status(homework: dict) -> str:
 
     homework_name = homework.get("homework_name")
     verdict = HOMEWORK_VERDICTS.get(homework.get("status"))
-    print(homework_name, verdict, sep="\n")
     return (
         f'Изменился статус проверки работы "{homework_name}".\n' f"{verdict}"
     )
@@ -103,11 +101,8 @@ def send_message(bot: telegram.Bot, message: str) -> None:
             text=message,
         )
     except TelegramError:
-        logger.error("Произошла ошибка при отправке сообщения")
-        raise exceptions.TelegramBotError(
-            "Произошла ошибка при отправке сообщения"
-        )
-    finally:
+        logger.error("Произошла ошибка Telegram при отправке сообщения")
+    else:
         logger.debug("Бот отправил сообщение:" f"{message}")
 
 
@@ -135,8 +130,6 @@ def main():
             else:
                 mes = parse_status(homework[0])
                 send_message(bot, mes)
-        except exceptions.TelegramBotError as error:
-            logger.error(error)
         except Exception as error:
             message = f"Сбой в работе программы: {error}"
             if message != prev_mes:
